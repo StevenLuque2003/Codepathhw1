@@ -1,16 +1,19 @@
 import UIKit
 import MapKit
 import PhotosUI
+import CoreLocation
 
 class TaskDetailViewController: UIViewController, PHPickerViewControllerDelegate {
     
     var task: Task
+    var updateTask: ((Task) -> Void)?
     let imageView = UIImageView()
     let mapView = MKMapView()
     let attachButton = UIButton(type: .system)
 
-    init(task: Task) {
+    init(task: Task, updateTask: ((Task) -> Void)?) {
         self.task = task
+        self.updateTask = updateTask
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -22,22 +25,18 @@ class TaskDetailViewController: UIViewController, PHPickerViewControllerDelegate
         super.viewDidLoad()
         title = task.title
         view.backgroundColor = .white
-
         setupUI()
     }
 
     func setupUI() {
-        // ImageView
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.backgroundColor = .lightGray
         imageView.translatesAutoresizingMaskIntoConstraints = false
 
-        // MapView
         mapView.translatesAutoresizingMaskIntoConstraints = false
-        mapView.isHidden = true  // Hide until a location is available
+        mapView.isHidden = true  
 
-        // Attach Button
         attachButton.setTitle("Attach Photo", for: .normal)
         attachButton.addTarget(self, action: #selector(openPhotoPicker), for: .touchUpInside)
         attachButton.translatesAutoresizingMaskIntoConstraints = false
@@ -83,8 +82,47 @@ class TaskDetailViewController: UIViewController, PHPickerViewControllerDelegate
                 self.imageView.image = selectedImage
                 self.task.image = selectedImage
                 self.task.isCompleted = true
+                self.extractLocation(from: provider)
+                self.updateTask?(self.task)
             }
         }
     }
-}
 
+    func extractLocation(from provider: NSItemProvider) {
+        provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, error in
+            guard let url = url else { return }
+            
+            let asset = AVURLAsset(url: url)
+            for metadataItem in asset.metadata {
+                if metadataItem.keySpace == .quickTimeMetadata {
+                    if let key = metadataItem.commonKey?.rawValue, key == "location",
+                       let locationString = metadataItem.value as? String {
+                        self.parseLocation(from: locationString)
+                    }
+                }
+            }
+        }
+    }
+
+    func parseLocation(from locationString: String) {
+        let coordinates = locationString.split(separator: "+").map { String($0) }
+        if coordinates.count == 2, 
+           let latitude = Double(coordinates[0]), 
+           let longitude = Double(coordinates[1]) {
+            let location = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+            DispatchQueue.main.async {
+                self.task.location = location
+                self.showLocationOnMap(location)
+            }
+        }
+    }
+
+    func showLocationOnMap(_ location: CLLocationCoordinate2D) {
+        mapView.isHidden = false
+        let annotation = MKPointAnnotation()
+        annotation.coordinate = location
+        annotation.title = "Photo Location"
+        mapView.addAnnotation(annotation)
+        mapView.setRegion(MKCoordinateRegion(center: location, span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)), animated: true)
+    }
+}
